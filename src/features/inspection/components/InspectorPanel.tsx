@@ -1,9 +1,10 @@
 import { AlertTriangle, Crosshair, RotateCcw, RotateCw, Ruler, Trash2 } from 'lucide-react'
-import type { DeskItem, WorkspacePlan } from '../../../shared/models'
-import { getDeviceDefinition } from '../../../shared/models'
+import type { DeviceDefinition, DeskItem, WorkspacePlan } from '../../../shared/models'
+import { resolvePlacedDevice } from '../../../shared/models'
 
 interface InspectorPanelProps {
   plan: WorkspacePlan
+  definitions: DeviceDefinition[]
   item: DeskItem | null
   issueIds: string[]
   onUpdateDesk: (field: 'deskWidthMm' | 'deskHeightMm', value: number) => void
@@ -16,9 +17,9 @@ function NumericField({ label, value, onChange }: { label: string; value: number
   return <label className="numeric-field"><span>{label}</span><input type="number" value={value} min={40} onChange={(event) => onChange(event.currentTarget.valueAsNumber)} /><em>mm</em></label>
 }
 
-export function InspectorPanel({ plan, item, issueIds, onUpdateDesk, onUpdateItem, onRotate, onDelete }: InspectorPanelProps) {
+export function InspectorPanel({ plan, definitions, item, issueIds, onUpdateDesk, onUpdateItem, onRotate, onDelete }: InspectorPanelProps) {
   const isIssue = item ? issueIds.includes(item.id) : false
-  const definition = item ? getDeviceDefinition(item.type) : null
+  const device = item ? resolvePlacedDevice(item, definitions) : null
   return (
     <aside className="inspector-panel">
       <div className="module-heading">
@@ -33,9 +34,11 @@ export function InspectorPanel({ plan, item, issueIds, onUpdateDesk, onUpdateIte
         </div>
         <p className="helper-text">建议保留 40 mm 走线缓冲空间</p>
       </div>
-      {item && definition ? (
+      {item && device ? (
         <div className="item-editor">
-          <div className="selected-item-heading"><span className="selected-swatch" style={{ backgroundColor: definition.color }} /> <div><strong>{definition.label}</strong><small>{definition.hint}</small></div><span className="item-code">{definition.shortLabel}</span></div>
+          <div className="selected-item-heading"><span className="selected-swatch" style={{ backgroundColor: device.color }} /> <div><strong>{device.label}</strong><small>{device.category}{device.unknown ? ` · 素材标识 ${item.type}` : ''}</small></div><span className="item-code">{device.shortLabel}</span></div>
+          {device.unknown && <div className="notice-callout"><AlertTriangle size={16} /><span>{device.hint}，名称与配色按原方案快照保留，可继续调整尺寸与位置。</span></div>}
+          {device.retired && <div className="notice-callout muted-notice"><AlertTriangle size={16} /><span>该素材已在面板停用，但本方案中的设备保持原样，编辑与统计不受影响。</span></div>}
           {isIssue && <div className="issue-callout"><AlertTriangle size={16} /><span>设备与其他元素重叠或超出桌面边界</span></div>}
           <div className="field-heading"><span>实际尺寸</span><span className="unit-label">单位：毫米</span></div>
           <div className="two-column-fields">

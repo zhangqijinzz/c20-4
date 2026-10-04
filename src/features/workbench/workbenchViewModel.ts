@@ -3,6 +3,11 @@ import {
   createId,
   createInitialDocument,
   createPlan,
+  DEFAULT_CATALOG_STATE,
+  findDefinition,
+  resolveDefinitions,
+  type CatalogState,
+  type DeviceInput,
   type DeskItem,
   type DeviceType,
   type LayoutAnalysis,
@@ -12,7 +17,17 @@ import {
 } from '../../shared/models'
 import { clampDeskSize, clampItemDimension } from '../../shared/layoutRules'
 import { moveCanvasItem, rotateCanvasItem } from '../canvas/canvasViewModel'
-import { createMaterialDraft } from '../materials/materialsViewModel'
+import {
+  countDeviceUsage,
+  createMaterialDraft,
+  deleteCustomDevice,
+  resetBuiltin,
+  setBuiltinDimensions,
+  setDeviceActive,
+  upsertCustomDevice,
+  validateDeviceInput,
+  type DeviceInputError,
+} from '../materials/materialsViewModel'
 import { inspectPlan } from '../inspection/inspectionViewModel'
 import { LocalWorkspaceRepository, type WorkspaceRepository } from './workspaceRepository'
 
@@ -26,8 +41,9 @@ export interface WorkspaceViewModel {
   issueCount: number
   feedback: string
   isPreviewOpen: boolean
+  catalog: CatalogState
   selectItem: (id: string | null) => void
-  addItem: (type: DeviceType) => void
+  addItem: (type: string) => void
   removeItem: (id: string) => void
   moveItem: (id: string, x: number, y: number) => void
   rotateItem: (id: string, delta: number) => void
@@ -39,6 +55,10 @@ export interface WorkspaceViewModel {
   deleteCurrentPlan: () => void
   openPreview: () => void
   closePreview: () => void
+  saveDevice: (input: DeviceInput, editingId: string | null) => DeviceInputError[]
+  toggleDeviceActive: (type: string, active: boolean) => void
+  resetDevice: (type: DeviceType) => void
+  removeDevice: (id: string) => void
 }
 
 const emptyInspection = { analysis: { overlapIds: [], outOfBoundsIds: [], coveragePercent: 0, status: 'clear' as const }, issueIds: [], issueCount: 0 }
@@ -68,6 +88,9 @@ export function useWorkspaceViewModel(repository?: WorkspaceRepository): Workspa
     return () => { active = false }
   }, [])
 
+  const catalog: CatalogState = useMemo(() => document?.catalog ?? DEFAULT_CATALOG_STATE, [document])
+  const definitions = useMemo(() => resolveDefinitions(catalog), [catalog])
+
   const activePlan = useMemo(
     () => document?.plans.find((plan) => plan.id === document.activePlanId) ?? null,
     [document],
@@ -96,14 +119,24 @@ export function useWorkspaceViewModel(repository?: WorkspaceRepository): Workspa
     void persist(nextDocument, message)
   }, [activePlan, document, persist])
 
+  const updateCatalog = useCallback((nextCatalog: CatalogState, message: string) => {
+    if (!document) return
+    void persist({ ...document, catalog: nextCatalog }, message)
+  }, [document, persist])
+
   const selectItem = useCallback((id: string | null) => setSelectedItemId(id), [])
 
-  const addItem = useCallback((type: DeviceType) => {
+  const addItem = useCallback((type: string) => {
     if (!activePlan) return
-    const draft = createMaterialDraft(type, activePlan.items.length)
+    const definition = findDefinition(definitions, type)
+    if (!definition || !definition.active) {
+      setFeedback('该素材已停用，可在素材管理中重新启用')
+      return
+    }
+    const draft = createMaterialDraft(definition, activePlan.items.length)
     updateActivePlan((plan) => ({ ...plan, items: [...plan.items, draft.item] }), draft.feedback)
     setSelectedItemId(draft.item.id)
-  }, [activePlan, updateActivePlan])
+  }, [activePlan, definitions, updateActivePlan])
 
   const removeItem = useCallback((id: string) => {
     updateActivePlan((plan) => ({ ...plan, items: plan.items.filter((item) => item.id !== id) }), '设备已移除')
@@ -137,10 +170,10 @@ export function useWorkspaceViewModel(repository?: WorkspaceRepository): Workspa
 
   const createNewPlan = useCallback(() => {
     if (!document) return
-    const plan = createPlan(`工作台 ${document.plans.length + 1}`, false)
+    const plan = createPlan(`工作台 ${document.plans.length + 1}`, false, definitions)
     void persist({ ...document, plans: [...document.plans, plan], activePlanId: plan.id }, '已创建空白方案')
     setSelectedItemId(null)
-  }, [document, persist])
+  }, [definitions, document, persist])
 
   const duplicatePlan = useCallback(() => {
     if (!document || !activePlan) return
@@ -174,6 +207,59 @@ export function useWorkspaceViewModel(repository?: WorkspaceRepository): Workspa
   const openPreview = useCallback(() => setIsPreviewOpen(true), [])
   const closePreview = useCallback(() => setIsPreviewOpen(false), [])
 
+  const saveDevice = useCallback((input: DeviceInput, editingId: string | null): DeviceInputError[] => {
+    if (!document) return []
+    const errors = validateDeviceInput(input, catalog, editingId)
+    if (errors.length > 0) return errors
+    if (editingId) {
+      const isBuiltinEditing = definitions.some((device) => device.type === editingId && device.builtin)
+      if (isBuiltinEditing) {
+        // 内置素材只放开默认尺寸：名称/配色/分类仍由内置定义决定
+        updateCatalog(
+          setBuiltinDimensions(catalog, editingId as DeviceType, input.widthMm, input.heightMm),
+          `「${input.label}」默认尺寸已更新，已有设备不受影响`,
+        )
+      } else {
+        updateCatalog(upsertCustomDevice(catalog, input, editingId), `「${input.label}」已保存`)
+      }
+    } else {
+      updateCatalog(upsertCustomDevice(catalog, input, null), `已新增自定义设备「${input.label}」`)
+    }
+    return []
+  }, [catalog, definitions, document, updateCatalog])
+
+  const toggleDeviceActive = useCallback((type: string, active: boolean) => {
+    if (!document) return
+    const definition = findDefinition(definitions, type)
+    if (!definition) return
+    updateCatalog(
+      setDeviceActive(catalog, type, active),
+      active ? `「${definition.label}」已启用` : `「${definition.label}」已停用，方案中的设备仍会显示`,
+    )
+  }, [catalog, definitions, document, updateCatalog])
+
+  const resetDevice = useCallback((type: DeviceType) => {
+    if (!document) return
+    const definition = findDefinition(definitions, type)
+    if (!definition) return
+    updateCatalog(resetBuiltin(catalog, type), `「${definition.label}」已恢复内置默认`)
+  }, [catalog, definitions, document, updateCatalog])
+
+  const removeDevice = useCallback((id: string) => {
+    if (!document) return
+    const definition = findDefinition(definitions, id)
+    if (!definition || definition.builtin) {
+      setFeedback('内置素材不能删除，可选择停用')
+      return
+    }
+    const usage = countDeviceUsage(document.plans).get(id) ?? 0
+    if (usage > 0) {
+      setFeedback(`「${definition.label}」已被 ${usage} 件已放置设备引用，不能删除，可改为停用`)
+      return
+    }
+    updateCatalog(deleteCustomDevice(catalog, id), `「${definition.label}」已删除`)
+  }, [catalog, definitions, document, updateCatalog])
+
   return {
     status,
     document,
@@ -184,6 +270,7 @@ export function useWorkspaceViewModel(repository?: WorkspaceRepository): Workspa
     issueCount,
     feedback,
     isPreviewOpen,
+    catalog,
     selectItem,
     addItem,
     removeItem,
@@ -197,5 +284,9 @@ export function useWorkspaceViewModel(repository?: WorkspaceRepository): Workspa
     deleteCurrentPlan,
     openPreview,
     closePreview,
+    saveDevice,
+    toggleDeviceActive,
+    resetDevice,
+    removeDevice,
   }
 }

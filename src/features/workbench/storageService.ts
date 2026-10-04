@@ -1,6 +1,8 @@
-import type { WorkspaceDocument } from '../../shared/models'
+import type { CatalogState } from '../../shared/models'
+import { normalizeCatalogState, DEFAULT_CATALOG_STATE } from '../../shared/models'
 
 export const STORAGE_KEY = 'focusdesk.document.v1'
+export const CATALOG_STORAGE_KEY = 'focusdesk.catalog.v1'
 const DATABASE_NAME = 'focusdesk-db'
 const STORE_NAME = 'workspace'
 
@@ -32,6 +34,31 @@ export class BrowserStorageService implements StorageService {
   }
 }
 
+/** 素材目录的本地种子：新开方案时仍能看到自定义素材，读取失败时静默退回内置素材 */
+export interface CatalogStore {
+  load(): CatalogState
+  save(state: CatalogState): void
+}
+
+export class BrowserCatalogStore implements CatalogStore {
+  load(): CatalogState {
+    try {
+      const raw = window.localStorage.getItem(CATALOG_STORAGE_KEY)
+      return raw ? normalizeCatalogState(JSON.parse(raw)) : DEFAULT_CATALOG_STATE
+    } catch {
+      return DEFAULT_CATALOG_STATE
+    }
+  }
+
+  save(state: CatalogState): void {
+    try {
+      window.localStorage.setItem(CATALOG_STORAGE_KEY, JSON.stringify(state))
+    } catch {
+      // 本地存储不可用时素材仍随文档保存，不阻断编辑
+    }
+  }
+}
+
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = window.indexedDB.open(DATABASE_NAME, 1)
@@ -55,10 +82,4 @@ function writeToDatabase(database: IDBDatabase, value: string): Promise<void> {
     request.onsuccess = () => resolve()
     request.onerror = () => reject(request.error ?? new Error('IndexedDB write failed'))
   })
-}
-
-export function isWorkspaceDocument(value: unknown): value is WorkspaceDocument {
-  if (!value || typeof value !== 'object') return false
-  const candidate = value as Partial<WorkspaceDocument>
-  return candidate.version === 1 && Array.isArray(candidate.plans) && typeof candidate.activePlanId === 'string'
 }

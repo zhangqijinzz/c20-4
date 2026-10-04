@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Move, RotateCw } from 'lucide-react'
-import type { DeskItem, LayoutAnalysis, WorkspacePlan } from '../../../shared/models'
-import { getDeviceDefinition } from '../../../shared/models'
+import type { DeviceDefinition, DeskItem, LayoutAnalysis, WorkspacePlan } from '../../../shared/models'
+import { resolvePlacedDevice } from '../../../shared/models'
 import { getItemBounds } from '../../../shared/layoutRules'
 
 interface CanvasStageProps {
   plan: WorkspacePlan
+  definitions: DeviceDefinition[]
   selectedItemId: string | null
   analysis: LayoutAnalysis
   onSelect: (id: string | null) => void
@@ -14,7 +15,7 @@ interface CanvasStageProps {
 
 interface DragState { id: string; offsetX: number; offsetY: number }
 
-export function CanvasStage({ plan, selectedItemId, analysis, onSelect, onMove }: CanvasStageProps) {
+export function CanvasStage({ plan, definitions, selectedItemId, analysis, onSelect, onMove }: CanvasStageProps) {
   const stageRef = useRef<SVGSVGElement>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
   const scaleToMm = useCallback((clientX: number, clientY: number) => {
@@ -56,18 +57,20 @@ export function CanvasStage({ plan, selectedItemId, analysis, onSelect, onMove }
         <rect width={plan.deskWidthMm} height={plan.deskHeightMm} rx="22" fill="url(#desk-grid)" />
         <text x="34" y="48" fill="#a0aec0" fontSize="20" letterSpacing="3">FOCUS ZONE / {plan.deskWidthMm} × {plan.deskHeightMm} MM</text>
         {plan.items.map((item) => {
-          const definition = getDeviceDefinition(item.type)
+          const device = resolvePlacedDevice(item, definitions)
           const isSelected = selectedItemId === item.id
           const hasIssue = analysis.overlapIds.includes(item.id) || analysis.outOfBoundsIds.includes(item.id)
           const cx = item.x + item.widthMm / 2
           const cy = item.y + item.heightMm / 2
-          return <g className={`desk-item ${isSelected ? 'is-selected' : ''} ${hasIssue ? 'has-issue' : ''}`} key={item.id} onPointerDown={(event) => startDrag(event, item)} role="button" tabIndex={0} aria-label={`${definition.label}，${item.widthMm}乘${item.heightMm}毫米`}>
+          const badge = device.unknown ? '已删除' : device.retired ? '已停用' : null
+          return <g className={`desk-item ${isSelected ? 'is-selected' : ''} ${hasIssue ? 'has-issue' : ''} ${device.available ? '' : 'is-retired'}`} key={item.id} onPointerDown={(event) => startDrag(event, item)} role="button" tabIndex={0} aria-label={`${device.label}，${item.widthMm}乘${item.heightMm}毫米${badge ? `，${badge}素材` : ''}`}>
             <g transform={`translate(${cx} ${cy}) rotate(${item.rotation})`}>
-              <rect x={-item.widthMm / 2} y={-item.heightMm / 2} width={item.widthMm} height={item.heightMm} rx={Math.min(24, item.heightMm / 5)} fill={definition.color} filter="url(#item-shadow)" />
+              <rect x={-item.widthMm / 2} y={-item.heightMm / 2} width={item.widthMm} height={item.heightMm} rx={Math.min(24, item.heightMm / 5)} fill={device.color} filter="url(#item-shadow)" />
               <rect className="item-inner-line" x={-item.widthMm / 2 + 12} y={-item.heightMm / 2 + 12} width={Math.max(0, item.widthMm - 24)} height={Math.max(0, item.heightMm - 24)} rx={12} fill="none" />
-              <text x="0" y="5" textAnchor="middle" fill="#1f2e44" fontWeight="700" fontSize={Math.max(18, Math.min(32, item.widthMm / 16))}>{definition.shortLabel}</text>
+              <text x="0" y="5" textAnchor="middle" fill="#1f2e44" fontWeight="700" fontSize={Math.max(18, Math.min(32, item.widthMm / 16))}>{device.shortLabel}</text>
               <text x="0" y="30" textAnchor="middle" fill="#44546b" fontSize="16">{item.widthMm} × {item.heightMm}</text>
             </g>
+            {isSelected && badge && <g transform={`translate(${getItemBounds(item).left + 4} ${Math.max(20, getItemBounds(item).top - 26)})`}><rect x="0" y="0" width="76" height="28" rx="14" className="retired-badge-bg" /><text x="38" y="19" textAnchor="middle" className="retired-badge-text" fontSize="15">{badge}</text></g>}
             {isSelected && <rect className="selection-box" x={getItemBounds(item).left - 8} y={getItemBounds(item).top - 8} width={getItemBounds(item).width + 16} height={getItemBounds(item).height + 16} rx="12" fill="none" />}
             {hasIssue && <g transform={`translate(${Math.max(18, getItemBounds(item).right - 4)} ${Math.max(18, getItemBounds(item).top - 4)}`}><circle r="18" fill="#ef6a6a" /><text textAnchor="middle" y="7" fill="white" fontSize="22" fontWeight="700">!</text></g>}
           </g>

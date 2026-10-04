@@ -1,5 +1,7 @@
 import type { DeskItem, ItemBounds, LayoutAnalysis, WorkspacePlan } from './models'
 
+export { clampDeskSize, clampItemDimension } from './limits'
+
 export function normalizeRotation(rotation: number): number {
   const normalized = rotation % 360
   return normalized < 0 ? normalized + 360 : normalized
@@ -41,7 +43,7 @@ export function analyzeLayout(plan: WorkspacePlan): LayoutAnalysis {
   })
 
   for (let index = 0; index < plan.items.length; index += 1) {
-    for (let nextIndex = index + 1; nextIndex < plan.items.length; nextIndex += 1) {
+    for (let nextIndex = index + 1; nextIndex < plan.items.length; nextIndex++) {
       const first = plan.items[index]
       const second = plan.items[nextIndex]
       const firstBounds = bounds.get(first.id)
@@ -63,14 +65,4 @@ export function analyzeLayout(plan: WorkspacePlan): LayoutAnalysis {
     coveragePercent,
     status: hasIssue ? 'attention' : 'clear',
   }
-}
-
-export function clampDeskSize(value: number, fallback: number): number {
-  if (!Number.isFinite(value)) return fallback
-  return Math.min(4000, Math.max(600, Math.round(value)))
-}
-
-export function clampItemDimension(value: number, fallback: number): number {
-  if (!Number.isFinite(value)) return fallback
-  return Math.min(2000, Math.max(40, Math.round(value)))
 }
