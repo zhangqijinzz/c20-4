@@ -1,11 +1,14 @@
 import { AlertTriangle, Crosshair, RotateCcw, RotateCw, Ruler, Trash2 } from 'lucide-react'
 import type { DeskItem, WorkspacePlan } from '../../../shared/models'
-import { getDeviceDefinition } from '../../../shared/models'
+
+export type MaterialStatus = 'custom' | 'builtin' | 'builtin-disabled' | 'missing'
 
 interface InspectorPanelProps {
   plan: WorkspacePlan
   item: DeskItem | null
   issueIds: string[]
+  materialStatus: MaterialStatus | null
+  defaultSize: { widthMm: number; heightMm: number } | null
   onUpdateDesk: (field: 'deskWidthMm' | 'deskHeightMm', value: number) => void
   onUpdateItem: (id: string, patch: Partial<Pick<DeskItem, 'widthMm' | 'heightMm' | 'x' | 'y'>>) => void
   onRotate: (id: string, delta: number) => void
@@ -16,9 +19,17 @@ function NumericField({ label, value, onChange }: { label: string; value: number
   return <label className="numeric-field"><span>{label}</span><input type="number" value={value} min={40} onChange={(event) => onChange(event.currentTarget.valueAsNumber)} /><em>mm</em></label>
 }
 
-export function InspectorPanel({ plan, item, issueIds, onUpdateDesk, onUpdateItem, onRotate, onDelete }: InspectorPanelProps) {
+const statusCopy: Record<MaterialStatus, { text: string; className: string }> = {
+  builtin: { text: '内置素材', className: 'material-badge builtin' },
+  custom: { text: '自定义素材', className: 'material-badge custom' },
+  'builtin-disabled': { text: '素材已停用 · 本实例保留', className: 'material-badge disabled' },
+  missing: { text: '素材已删除 · 本实例保留', className: 'material-badge missing' },
+}
+
+export function InspectorPanel({ plan, item, issueIds, materialStatus, defaultSize, onUpdateDesk, onUpdateItem, onRotate, onDelete }: InspectorPanelProps) {
   const isIssue = item ? issueIds.includes(item.id) : false
-  const definition = item ? getDeviceDefinition(item.type) : null
+  const sizeDiffers = item && defaultSize
+    && (item.widthMm !== defaultSize.widthMm || item.heightMm !== defaultSize.heightMm)
   return (
     <aside className="inspector-panel">
       <div className="module-heading">
@@ -33,11 +44,19 @@ export function InspectorPanel({ plan, item, issueIds, onUpdateDesk, onUpdateIte
         </div>
         <p className="helper-text">建议保留 40 mm 走线缓冲空间</p>
       </div>
-      {item && definition ? (
+      {item ? (
         <div className="item-editor">
-          <div className="selected-item-heading"><span className="selected-swatch" style={{ backgroundColor: definition.color }} /> <div><strong>{definition.label}</strong><small>{definition.hint}</small></div><span className="item-code">{definition.shortLabel}</span></div>
+          <div className="selected-item-heading"><span className="selected-swatch" style={{ backgroundColor: item.color }} /> <div><strong>{item.label}</strong><small>{item.hint}</small></div><span className="item-code">{item.shortLabel}</span></div>
+          {materialStatus && materialStatus !== 'builtin' && (
+            <div className={`${statusCopy[materialStatus].className} material-status-line`}>{statusCopy[materialStatus].text}</div>
+          )}
           {isIssue && <div className="issue-callout"><AlertTriangle size={16} /><span>设备与其他元素重叠或超出桌面边界</span></div>}
-          <div className="field-heading"><span>实际尺寸</span><span className="unit-label">单位：毫米</span></div>
+          <div className="field-heading">
+            <span>实际尺寸</span>
+            {sizeDiffers && defaultSize
+              ? <span className="size-diff-note">素材默认 {defaultSize.widthMm} × {defaultSize.heightMm}</span>
+              : <span className="unit-label">单位：毫米</span>}
+          </div>
           <div className="two-column-fields">
             <NumericField label="宽度" value={item.widthMm} onChange={(value) => onUpdateItem(item.id, { widthMm: value })} />
             <NumericField label="深度" value={item.heightMm} onChange={(value) => onUpdateItem(item.id, { heightMm: value })} />

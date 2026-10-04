@@ -4,7 +4,7 @@ import {
   createInitialDocument,
   createPlan,
   type DeskItem,
-  type DeviceType,
+  type DeviceDefinition,
   type LayoutAnalysis,
   type WorkspaceDocument,
   type WorkspacePlan,
@@ -27,7 +27,7 @@ export interface WorkspaceViewModel {
   feedback: string
   isPreviewOpen: boolean
   selectItem: (id: string | null) => void
-  addItem: (type: DeviceType) => void
+  addItem: (device: DeviceDefinition) => void
   removeItem: (id: string) => void
   moveItem: (id: string, x: number, y: number) => void
   rotateItem: (id: string, delta: number) => void
@@ -55,10 +55,18 @@ export function useWorkspaceViewModel(repository?: WorkspaceRepository): Workspa
     let active = true
     void repositoryRef.current.load().then((loaded) => {
       if (!active) return
-      const nextDocument = loaded ?? createInitialDocument()
-      setDocument(nextDocument)
+      if (loaded) {
+        setDocument(loaded.document)
+        setFeedback('已恢复上次编辑状态')
+        // v1 老方案迁移到带身份快照的 v2 后立即落盘，避免下次再走兼容逻辑
+        if (loaded.migrated) {
+          void repositoryRef.current.save(loaded.document).catch(() => undefined)
+        }
+      } else {
+        setDocument(createInitialDocument())
+        setFeedback('已创建示例工作台，可以直接拖动设备')
+      }
       setStatus('ready')
-      setFeedback(loaded ? '已恢复上次编辑状态' : '已创建示例工作台，可以直接拖动设备')
     }).catch(() => {
       if (!active) return
       setDocument(createInitialDocument())
@@ -98,9 +106,9 @@ export function useWorkspaceViewModel(repository?: WorkspaceRepository): Workspa
 
   const selectItem = useCallback((id: string | null) => setSelectedItemId(id), [])
 
-  const addItem = useCallback((type: DeviceType) => {
+  const addItem = useCallback((device: DeviceDefinition) => {
     if (!activePlan) return
-    const draft = createMaterialDraft(type, activePlan.items.length)
+    const draft = createMaterialDraft(device, activePlan.items.length)
     updateActivePlan((plan) => ({ ...plan, items: [...plan.items, draft.item] }), draft.feedback)
     setSelectedItemId(draft.item.id)
   }, [activePlan, updateActivePlan])
